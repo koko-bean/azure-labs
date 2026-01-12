@@ -1,0 +1,296 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "11186229350177955294"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "centralus"
+    },
+    "org": {
+      "type": "string",
+      "defaultValue": "lab"
+    },
+    "env": {
+      "type": "string",
+      "defaultValue": "dev"
+    },
+    "regionCode": {
+      "type": "string",
+      "defaultValue": "cus"
+    },
+    "instance": {
+      "type": "string",
+      "defaultValue": "01"
+    },
+    "vhubResourceGroup": {
+      "type": "string",
+      "defaultValue": "rg-lab-dev-cus-plat-vwan",
+      "metadata": {
+        "description": "Resource group where the Virtual Hub exists (platform/vWAN RG)."
+      }
+    },
+    "vhubName": {
+      "type": "string",
+      "defaultValue": "lab-dev-cus-plat-vhub-01",
+      "metadata": {
+        "description": "Virtual Hub name created in Step 1."
+      }
+    },
+    "spokeVnetIds": {
+      "type": "array",
+      "metadata": {
+        "description": "Resource IDs of spoke VNets to enable diagnostics on."
+      }
+    },
+    "lawRetentionDays": {
+      "type": "int",
+      "defaultValue": 30
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "workload": "sre-lab",
+        "environment": "[parameters('env')]",
+        "region": "[parameters('regionCode')]",
+        "owner": "kohen"
+      }
+    }
+  },
+  "variables": {
+    "base": "[format('{0}-{1}-{2}', parameters('org'), parameters('env'), parameters('regionCode'))]",
+    "lawName": "[format('{0}-ops-law-{1}', variables('base'), parameters('instance'))]",
+    "saName": "[toLower(format('st{0}', uniqueString(resourceGroup().id, variables('base'), parameters('instance'))))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[variables('lawName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "retentionInDays": "[parameters('lawRetentionDays')]",
+        "publicNetworkAccessForIngestion": "Enabled",
+        "publicNetworkAccessForQuery": "Enabled",
+        "sku": {
+          "name": "PerGB2018"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-01-01",
+      "name": "[variables('saName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "supportsHttpsTrafficOnly": true,
+        "accessTier": "Hot"
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "diag-vhub",
+      "resourceGroup": "[parameters('vhubResourceGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "vhubName": {
+            "value": "[parameters('vhubName')]"
+          },
+          "lawId": {
+            "value": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+          },
+          "diagName": {
+            "value": "[format('{0}-diag-vhub-{1}', variables('base'), parameters('instance'))]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "6844546557630660998"
+            }
+          },
+          "parameters": {
+            "vhubName": {
+              "type": "string",
+              "metadata": {
+                "description": "Virtual Hub name (must exist in this RG scope)."
+              }
+            },
+            "lawId": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics Workspace resource ID (destination)."
+              }
+            },
+            "diagName": {
+              "type": "string",
+              "metadata": {
+                "description": "Diagnostic setting name."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[format('Microsoft.Network/virtualHubs/{0}', parameters('vhubName'))]",
+              "name": "[parameters('diagName')]",
+              "properties": {
+                "workspaceId": "[parameters('lawId')]",
+                "logs": [
+                  {
+                    "categoryGroup": "allLogs",
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+          ],
+          "outputs": {
+            "vhubDiagnosticSettingId": {
+              "type": "string",
+              "value": "[extensionResourceId(resourceId('Microsoft.Network/virtualHubs', parameters('vhubName')), 'Microsoft.Insights/diagnosticSettings', parameters('diagName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+      ]
+    },
+    {
+      "copy": {
+        "name": "vnetDiagnostics",
+        "count": "[length(parameters('spokeVnetIds'))]"
+      },
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('diag-vnet-{0}', add(copyIndex(), 1))]",
+      "subscriptionId": "[split(parameters('spokeVnetIds')[copyIndex()], '/')[2]]",
+      "resourceGroup": "[split(parameters('spokeVnetIds')[copyIndex()], '/')[4]]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "vnetName": {
+            "value": "[last(split(parameters('spokeVnetIds')[copyIndex()], '/'))]"
+          },
+          "lawId": {
+            "value": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+          },
+          "diagName": {
+            "value": "[format('{0}-diag-vnet-{1}-{2}', variables('base'), add(copyIndex(), 1), parameters('instance'))]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.39.26.7824",
+              "templateHash": "6134431207308883993"
+            }
+          },
+          "parameters": {
+            "vnetName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the existing VNet in this resource group."
+              }
+            },
+            "lawId": {
+              "type": "string",
+              "metadata": {
+                "description": "Log Analytics Workspace resource ID."
+              }
+            },
+            "diagName": {
+              "type": "string",
+              "metadata": {
+                "description": "Diagnostic setting name."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[format('Microsoft.Network/virtualNetworks/{0}', parameters('vnetName'))]",
+              "name": "[parameters('diagName')]",
+              "properties": {
+                "workspaceId": "[parameters('lawId')]",
+                "logs": [
+                  {
+                    "categoryGroup": "allLogs",
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              }
+            }
+          ],
+          "outputs": {
+            "vnetDiagnosticSettingId": {
+              "type": "string",
+              "value": "[extensionResourceId(resourceId('Microsoft.Network/virtualNetworks', parameters('vnetName')), 'Microsoft.Insights/diagnosticSettings', parameters('diagName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "logAnalyticsWorkspaceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.OperationalInsights/workspaces', variables('lawName'))]"
+    },
+    "flowStorageAccountId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Storage/storageAccounts', variables('saName'))]"
+    },
+    "vhubDiagnosticSettingId": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, parameters('vhubResourceGroup')), 'Microsoft.Resources/deployments', 'diag-vhub'), '2025-04-01').outputs.vhubDiagnosticSettingId.value]"
+    }
+  }
+}
