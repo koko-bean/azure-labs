@@ -1,0 +1,316 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.39.26.7824",
+      "templateHash": "16612336090135028822"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "centralus",
+      "metadata": {
+        "description": "Azure region for all resources."
+      }
+    },
+    "org": {
+      "type": "string",
+      "defaultValue": "lab",
+      "metadata": {
+        "description": "Org / prefix token (e.g., lab)."
+      }
+    },
+    "env": {
+      "type": "string",
+      "defaultValue": "dev",
+      "metadata": {
+        "description": "Environment token (e.g., dev, test, prd)."
+      }
+    },
+    "regionCode": {
+      "type": "string",
+      "defaultValue": "cus",
+      "metadata": {
+        "description": "Region code token (e.g., cus)."
+      }
+    },
+    "instance": {
+      "type": "string",
+      "defaultValue": "01",
+      "metadata": {
+        "description": "Instance number for repeatable deployments."
+      }
+    },
+    "appSpokeCidr": {
+      "type": "string",
+      "defaultValue": "10.0.16.0/22",
+      "metadata": {
+        "description": "Address space for App spoke VNet."
+      }
+    },
+    "svcSpokeCidr": {
+      "type": "string",
+      "defaultValue": "10.0.20.0/22",
+      "metadata": {
+        "description": "Address space for Shared Services spoke VNet."
+      }
+    },
+    "tags": {
+      "type": "object",
+      "defaultValue": {
+        "workload": "sre-lab",
+        "environment": "[parameters('env')]",
+        "region": "[parameters('regionCode')]"
+      },
+      "metadata": {
+        "description": "Optional tags."
+      }
+    }
+  },
+  "variables": {
+    "base": "[format('{0}-{1}-{2}', parameters('org'), parameters('env'), parameters('regionCode'))]",
+    "appVnetName": "[format('{0}-spk-app-vnet-{1}', variables('base'), parameters('instance'))]",
+    "appNsgName": "[format('{0}-spk-app-nsg-{1}', variables('base'), parameters('instance'))]",
+    "appConnName": "[format('{0}-spk-app-vhubconn-{1}', variables('base'), parameters('instance'))]",
+    "svcVnetName": "[format('{0}-spk-svc-vnet-{1}', variables('base'), parameters('instance'))]",
+    "svcNsgName": "[format('{0}-spk-svc-nsg-{1}', variables('base'), parameters('instance'))]",
+    "svcConnName": "[format('{0}-spk-svc-vhubconn-{1}', variables('base'), parameters('instance'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[variables('appNsgName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Allow-SSH-From-MyIP",
+            "properties": {
+              "priority": 100,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Tcp",
+              "sourceAddressPrefix": "Internet",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "22"
+            }
+          },
+          {
+            "name": "Deny-All-Inbound",
+            "properties": {
+              "priority": 4096,
+              "direction": "Inbound",
+              "access": "Deny",
+              "protocol": "*",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2025-01-01",
+      "name": "[variables('appVnetName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('appSpokeCidr')]"
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2025-01-01",
+      "name": "[format('{0}/{1}', variables('appVnetName'), 'app-web')]",
+      "properties": {
+        "addressPrefix": "10.0.16.0/25",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appNsgName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appNsgName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('appVnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2025-01-01",
+      "name": "[format('{0}/{1}', variables('appVnetName'), 'app-api')]",
+      "properties": {
+        "addressPrefix": "10.0.16.128/25",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appNsgName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appNsgName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('appVnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2025-01-01",
+      "name": "[format('{0}/{1}', variables('appVnetName'), 'private-endpoints')]",
+      "properties": {
+        "addressPrefix": "10.0.17.0/26",
+        "privateEndpointNetworkPolicies": "Disabled",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appNsgName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appNsgName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('appVnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[variables('svcNsgName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "securityRules": [
+          {
+            "name": "Allow-DNS-From-AppSpoke",
+            "properties": {
+              "priority": 100,
+              "direction": "Inbound",
+              "access": "Allow",
+              "protocol": "Udp",
+              "sourceAddressPrefix": "[parameters('appSpokeCidr')]",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "53"
+            }
+          },
+          {
+            "name": "Deny-All-Inbound",
+            "properties": {
+              "priority": 4096,
+              "direction": "Inbound",
+              "access": "Deny",
+              "protocol": "*",
+              "sourceAddressPrefix": "*",
+              "sourcePortRange": "*",
+              "destinationAddressPrefix": "*",
+              "destinationPortRange": "*"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2025-01-01",
+      "name": "[variables('svcVnetName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "[parameters('svcSpokeCidr')]"
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2025-01-01",
+      "name": "[format('{0}/{1}', variables('svcVnetName'), 'shared-services')]",
+      "properties": {
+        "addressPrefix": "10.0.20.0/24",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('svcNsgName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('svcNsgName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('svcVnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks/subnets",
+      "apiVersion": "2025-01-01",
+      "name": "[format('{0}/{1}', variables('svcVnetName'), 'management')]",
+      "properties": {
+        "addressPrefix": "10.0.21.0/24",
+        "networkSecurityGroup": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('svcNsgName'))]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', variables('svcNsgName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('svcVnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualHubs/hubVirtualNetworkConnections",
+      "apiVersion": "2024-01-01",
+      "name": "[format('{0}/{1}', 'lab-dev-cus-plat-vhub-01', variables('appConnName'))]",
+      "properties": {
+        "remoteVirtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('appVnetName'))]"
+        },
+        "enableInternetSecurity": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('appVnetName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/virtualHubs/hubVirtualNetworkConnections",
+      "apiVersion": "2024-01-01",
+      "name": "[format('{0}/{1}', 'lab-dev-cus-plat-vhub-01', variables('svcConnName'))]",
+      "properties": {
+        "remoteVirtualNetwork": {
+          "id": "[resourceId('Microsoft.Network/virtualNetworks', variables('svcVnetName'))]"
+        },
+        "enableInternetSecurity": false
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('svcVnetName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "appVnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', variables('appVnetName'))]"
+    },
+    "svcVnetId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualNetworks', variables('svcVnetName'))]"
+    },
+    "appHubConnectionId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualHubs/hubVirtualNetworkConnections', 'lab-dev-cus-plat-vhub-01', variables('appConnName'))]"
+    },
+    "svcHubConnectionId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/virtualHubs/hubVirtualNetworkConnections', 'lab-dev-cus-plat-vhub-01', variables('svcConnName'))]"
+    },
+    "appNsgId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('appNsgName'))]"
+    },
+    "svcNsgId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('svcNsgName'))]"
+    }
+  }
+}
