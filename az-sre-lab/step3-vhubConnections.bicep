@@ -11,7 +11,14 @@ param svcVnetId string
 param base string
 param instance string = '01'
 
-param tags object = {}
+param tags object = {  
+  
+  workload: 'sre-lab'
+  environment: 'dev'
+  region: 'centralus'
+  primaryRegion: 'cus'
+  owner: 'kohen'
+}
 
 resource vhub 'Microsoft.Network/virtualHubs@2024-01-01' existing = {
   name: vhubName

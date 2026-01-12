@@ -46,7 +46,7 @@ resource svcVnet 'Microsoft.Network/virtualNetworks@2025-01-01' = {
 // (Optional) add your subnet + NSG resources here as you already have them.
 
 // --- vHub Connections (deploy in vHub RG via module scope) ---
-module vhubConnections 'modules/vhubConnections.bicep' = {
+module vhubConnections './step3-vhubConnections.bicep' = {
   name: 'vhubConnections'
   scope: resourceGroup(vhubResourceGroup)
   params: {
